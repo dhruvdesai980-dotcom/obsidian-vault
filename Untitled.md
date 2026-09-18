@@ -1,37 +1,38 @@
-Let’s run a stronger MSTRT-510 test. We can reuse your `mstrt510_dim_counterparty` and `mstrt510_fact_trade` tables, but create an **Agreement table without `counterparty_code`** and a separate bridge. This removes the alternate path that kept Page 1 working.
+Let’s test **MSTRT-499** with one small table and **one Counterparty attribute that has multiple forms**. The important distinction is that `counterparty_code`, `counterparty_name`, and `legal_entity_id` must be forms of **the same attribute**, rather than three separate attributes on the grid.
 
-Run these in Databricks:
+### 1. Create the test table in Databricks
 
-```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510b_dim_agreement
-USING DELTA AS
-SELECT agreement_key, agreement_name
-FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_agreement;
-```
+Run this in a SQL notebook, using the same catalog and `raw` schema as your earlier tests:
 
 ```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510b_agreement_counterparty
-USING DELTA AS
-SELECT agreement_key, counterparty_code
-FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_agreement;
+CREATE OR REPLACE TABLE
+  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt499_counterparty
+USING DELTA
+AS
+SELECT *
+FROM VALUES
+  ('CP001', 'Apex Bank',       'LEI-APEX-001'),
+  ('CP002', 'Beacon Bank',     'LEI-BEACON-002'),
+  ('CP003', 'Crest Insurance', 'LEI-CREST-003')
+AS t(counterparty_code, counterparty_name, legal_entity_id);
 ```
 
-**Version A**
+Each code has exactly one name and one legal entity ID, making the forms easy to check.
 
-1. Create a **new Mosaic model** using those two `mstrt510b_` tables plus the existing `mstrt510_dim_counterparty` and `mstrt510_fact_trade`. Leave the current model and dashboard as evidence of our first test.
-    
-2. Check the model’s table mappings: Counterparty connects to the bridge by `counterparty_code`; the bridge connects to Agreement by `agreement_key`; Agreement connects to Trade by `agreement_key`.
-    
-3. Publish it. Create a dashboard grid with **Counterparty + Agreement** and confirm it shows six agreements, including **AG006 under Apex Bank**. Save the dashboard and its Query Details.
-    
+### 2. Create a separate Mosaic model
 
-**Version B**
+Add **only** `mstrt499_counterparty` to a new model named **MSTRT-499 Multi-Form Test**. In **Prep and Model → Tables**, create a **Counterparty** attribute using `counterparty_code` as its ID. In that attribute’s setup, add `counterparty_name` as its description form and `legal_entity_id` as another form.
 
-4. In the model, remove **only the bridge connection between Counterparty and Agreement**, then publish. Check the saved grid after a fresh reopen. We need an actual error, missing row, or changed pairing before proceeding.
-    
-5. Create an **Agreement + Trade Date + Trade Amount** page and confirm it works.
-    
-6. Use Revert to restore Version A’s bridge connection, **publish the restored model**, and reopen both pages.
-    
+Before moving on, check that the model lists **one Counterparty attribute** with all three forms. If it lists three independent attributes, the test is not set up yet.
 
-The decisive observation is what happens at step 6: if the old grid remains broken despite the restored mapping and a fresh query, MSTRT-510 is reproduced. If it recovers, this controlled test does not reproduce the revert problem.
+### 3. Create the dashboard
+
+Publish the model and create a dashboard named **MSTRT-499 Attribute Forms Test**. Add a grid, then put **Counterparty** in **Rows** once.
+
+Record whether the grid shows the code, name, and legal entity ID as separate subcolumns. Strategy documents controls for selecting which forms display in an individual visualization. [Strategy: Select Which Attribute Forms to Display](https://www2.strategy.com/producthelp/current/MSTRWeb/webhelp/lang_1033/content/Selecting_which_attribute_forms_to_display_in_a_vi.htm)
+
+### 4. Test the display control
+
+In the grid’s **Editor** panel, right-click **Counterparty** in Rows and select **Display Attribute Forms**. Clear the checkbox for `legal_entity_id`, apply, and confirm that its subcolumn disappears. Save and reopen the dashboard to check that the choice persists. Then add Counterparty to a second grid and see which forms it shows initially. [Strategy’s documented steps](https://www2.strategy.com/producthelp/current/MSTRWeb/webhelp/lang_1033/content/Selecting_which_attribute_forms_to_display_in_a_vi.htm)
+
+**First checkpoint:** create the table and show me the Mosaic attribute setup screen. The exact form-setting controls depend on what your editor presents, so we can configure that part from your screen.
