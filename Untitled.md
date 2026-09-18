@@ -1,52 +1,37 @@
-Use these **three dedicated MSTRT-510 tables**. They give you a Counterparty → Agreement relationship to change in the model, plus a trade table for a dashboard metric. Run each statement in a separate Databricks SQL cell.
+Let’s run a stronger MSTRT-510 test. We can reuse your `mstrt510_dim_counterparty` and `mstrt510_fact_trade` tables, but create an **Agreement table without `counterparty_code`** and a separate bridge. This removes the alternate path that kept Page 1 working.
+
+Run these in Databricks:
 
 ```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_counterparty
+CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510b_dim_agreement
 USING DELTA AS
-SELECT *
-FROM VALUES
-  ('CP001', 'Apex Bank',       'BANK'),
-  ('CP002', 'Beacon Bank',     'BANK'),
-  ('CP003', 'Crest Insurance', 'INSURANCE'),
-  ('CP004', 'Delta Pension',   'PENSION')
-AS v(counterparty_code, counterparty_name, counterparty_type);
+SELECT agreement_key, agreement_name
+FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_agreement;
 ```
 
 ```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_agreement
+CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510b_agreement_counterparty
 USING DELTA AS
-SELECT *
-FROM VALUES
-  ('AG001', 'Apex Loan Agreement',       'CP001'),
-  ('AG002', 'Apex Derivative Agreement', 'CP001'),
-  ('AG003', 'Beacon Credit Agreement',   'CP002'),
-  ('AG004', 'Crest Insurance Agreement', 'CP003'),
-  ('AG005', 'Delta Pension Agreement',   'CP004'),
-  ('AG006', 'Apex Future Agreement',     'CP001')
-AS v(agreement_key, agreement_name, counterparty_code);
+SELECT agreement_key, counterparty_code
+FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_agreement;
 ```
 
-```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_fact_trade
-USING DELTA AS
-SELECT *
-FROM VALUES
-  ('TR001', 'AG001', DATE '2026-01-05', 1000.00),
-  ('TR002', 'AG001', DATE '2026-01-06', 1500.00),
-  ('TR003', 'AG002', DATE '2026-01-07', 2000.00),
-  ('TR004', 'AG003', DATE '2026-01-08', 2500.00),
-  ('TR005', 'AG004', DATE '2026-01-09', 3000.00),
-  ('TR006', 'AG005', DATE '2026-01-10', 3500.00)
-AS v(trade_key, agreement_key, trade_date, trade_amount);
-```
+**Version A**
 
-For **Version A**, the intended links are:
+1. Create a **new Mosaic model** using those two `mstrt510b_` tables plus the existing `mstrt510_dim_counterparty` and `mstrt510_fact_trade`. Leave the current model and dashboard as evidence of our first test.
+    
+2. Check the model’s table mappings: Counterparty connects to the bridge by `counterparty_code`; the bridge connects to Agreement by `agreement_key`; Agreement connects to Trade by `agreement_key`.
+    
+3. Publish it. Create a dashboard grid with **Counterparty + Agreement** and confirm it shows six agreements, including **AG006 under Apex Bank**. Save the dashboard and its Query Details.
+    
 
-|Parent table|Child table|Matching columns|
-|---|---|---|
-|`mstrt510_dim_counterparty`|`mstrt510_dim_agreement`|`counterparty_code`|
-|`mstrt510_dim_agreement`|`mstrt510_fact_trade`|`agreement_key`|
+**Version B**
 
-**AG006 belongs to Apex Bank but has no trade.** It gives us an easy row to watch when a relationship changes: a Counterparty + Agreement grid should show all **6 agreements** when it uses the direct dimension relationship.
+4. In the model, remove **only the bridge connection between Counterparty and Agreement**, then publish. Check the saved grid after a fresh reopen. We need an actual error, missing row, or changed pairing before proceeding.
+    
+5. Create an **Agreement + Trade Date + Trade Amount** page and confirm it works.
+    
+6. Use Revert to restore Version A’s bridge connection, **publish the restored model**, and reopen both pages.
+    
 
-The tables make the test controlled, but they do not guarantee that a particular model edit will break an existing dashboard. First publish Version A and save the working results; then we can choose one relationship change for Version B and measure what Revert actually restores.
+The decisive observation is what happens at step 6: if the old grid remains broken despite the restored mapping and a fresh query, MSTRT-510 is reproduced. If it recovers, this controlled test does not reproduce the revert problem.
