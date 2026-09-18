@@ -1,53 +1,52 @@
-Let’s create **two tables dedicated to MSTRT-505** in the same Databricks catalog and `raw` schema. Run each statement in a separate SQL cell.
-
-**1. Agreement dimension — 12 agreements**
+Use these **three dedicated MSTRT-510 tables**. They give you a Counterparty → Agreement relationship to change in the model, plus a trade table for a dashboard metric. Run each statement in a separate Databricks SQL cell.
 
 ```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt505_dim_agreement
-USING DELTA
-AS
+CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_counterparty
+USING DELTA AS
 SELECT *
 FROM VALUES
-  ('AG001', 'Agreement 01'),
-  ('AG002', 'Agreement 02'),
-  ('AG003', 'Agreement 03'),
-  ('AG004', 'Agreement 04'),
-  ('AG005', 'Agreement 05'),
-  ('AG006', 'Agreement 06'),
-  ('AG007', 'Agreement 07'),
-  ('AG008', 'Agreement 08'),
-  ('AG009', 'Agreement 09'),
-  ('AG010', 'Agreement 10'),
-  ('AG011', 'Agreement 11'),
-  ('AG012', 'Agreement 12')
-AS v(agreement_key, agreement_name);
+  ('CP001', 'Apex Bank',       'BANK'),
+  ('CP002', 'Beacon Bank',     'BANK'),
+  ('CP003', 'Crest Insurance', 'INSURANCE'),
+  ('CP004', 'Delta Pension',   'PENSION')
+AS v(counterparty_code, counterparty_name, counterparty_type);
 ```
 
-**2. Trade fact — trades for only five agreements**
-
 ```sql
-CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt505_fact_trade
-USING DELTA
-AS
+CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_dim_agreement
+USING DELTA AS
 SELECT *
 FROM VALUES
-  ('TR001', 'AG001', DATE '2026-01-05'),
-  ('TR002', 'AG002', DATE '2026-01-06'),
-  ('TR003', 'AG003', DATE '2026-01-07'),
-  ('TR004', 'AG004', DATE '2026-01-08'),
-  ('TR005', 'AG005', DATE '2026-01-09')
-AS v(trade_key, agreement_key, trade_date);
+  ('AG001', 'Apex Loan Agreement',       'CP001'),
+  ('AG002', 'Apex Derivative Agreement', 'CP001'),
+  ('AG003', 'Beacon Credit Agreement',   'CP002'),
+  ('AG004', 'Crest Insurance Agreement', 'CP003'),
+  ('AG005', 'Delta Pension Agreement',   'CP004'),
+  ('AG006', 'Apex Future Agreement',     'CP001')
+AS v(agreement_key, agreement_name, counterparty_code);
 ```
-
-The model should relate the tables through `agreement_key`. Before building it, verify the test data:
 
 ```sql
-SELECT
-  (SELECT COUNT(*) FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt505_dim_agreement)
-    AS all_agreements,
-  (SELECT COUNT(DISTINCT agreement_key)
-   FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt505_fact_trade)
-    AS agreements_with_trades;
+CREATE OR REPLACE TABLE `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt510_fact_trade
+USING DELTA AS
+SELECT *
+FROM VALUES
+  ('TR001', 'AG001', DATE '2026-01-05', 1000.00),
+  ('TR002', 'AG001', DATE '2026-01-06', 1500.00),
+  ('TR003', 'AG002', DATE '2026-01-07', 2000.00),
+  ('TR004', 'AG003', DATE '2026-01-08', 2500.00),
+  ('TR005', 'AG004', DATE '2026-01-09', 3000.00),
+  ('TR006', 'AG005', DATE '2026-01-10', 3500.00)
+AS v(trade_key, agreement_key, trade_date, trade_amount);
 ```
 
-Expected result: **12** and **5**. When you add them to Mosaic, use these two `mstrt505_` tables only.
+For **Version A**, the intended links are:
+
+|Parent table|Child table|Matching columns|
+|---|---|---|
+|`mstrt510_dim_counterparty`|`mstrt510_dim_agreement`|`counterparty_code`|
+|`mstrt510_dim_agreement`|`mstrt510_fact_trade`|`agreement_key`|
+
+**AG006 belongs to Apex Bank but has no trade.** It gives us an easy row to watch when a relationship changes: a Counterparty + Agreement grid should show all **6 agreements** when it uses the direct dimension relationship.
+
+The tables make the test controlled, but they do not guarantee that a particular model edit will break an existing dashboard. First publish Version A and save the working results; then we can choose one relationship change for Version B and measure what Revert actually restores.
