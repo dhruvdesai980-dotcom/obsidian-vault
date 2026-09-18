@@ -1,181 +1,141 @@
-For **MSTRT-506**, we should create another small controlled model. This issue differs from MSTRT-507.
+Yes. This will produce a clearer business impact: a valid agreement will disappear because Strategy uses the fact table as the bridge.
 
-## Problem statement in simple terms
+## 1. Add an agreement with no trade
 
-Imagine two dimension tables:
-
-### Counterparty
-
-|Counterparty Code|Counterparty Name|
-|---|---|
-|CP001|Apex Bank|
-|CP002|Beacon Bank|
-
-### Agreement
-
-|Agreement ID|Agreement Name|Counterparty Code|
-|---|---|---|
-|AG001|Loan Agreement|CP001|
-|AG002|Derivative Agreement|CP001|
-|AG003|Credit Agreement|CP002|
-
-These tables can join directly using `Counterparty Code`.
-
-```text
-Counterparty ──Counterparty Code── Agreement
-```
-
-However, Mosaic may connect both dimensions only through a fact table:
-
-```text
-Counterparty → Fact ← Agreement
-```
-
-That works when a fact metric is included. But if the dashboard grid contains only:
-
-- Counterparty Name
-    
-- Agreement Name
-    
-
-Mosaic may not know how to join them directly and may report a Cartesian-product warning.
-
-## Controlled tables required
-
-We need three tables:
-
-1. `mstrt506_dim_counterparty`
-    
-2. `mstrt506_dim_agreement`
-    
-3. `mstrt506_fact_trade`
-    
-
-### 1. Counterparty dimension
+Run this in Databricks:
 
 ```sql
-CREATE OR REPLACE TABLE
-  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_dim_counterparty
-USING DELTA
-AS
-SELECT *
-FROM VALUES
-  ('CP001', 'Apex Bank',       'BANK'),
-  ('CP002', 'Beacon Bank',     'BANK'),
-  ('CP003', 'Crest Insurance', 'INSURANCE'),
-  ('CP004', 'Delta Pension',   'PENSION')
-AS t(
-  counterparty_code,
-  counterparty_name,
-  counterparty_type
-);
+MERGE INTO
+  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_dim_agreement AS target
+USING (
+  SELECT
+    'AG006' AS agreement_key,
+    'Apex Future Agreement' AS agreement_name,
+    'CP001' AS counterparty_code,
+    'FUTURE' AS agreement_type
+) AS source
+ON target.agreement_key = source.agreement_key
+
+WHEN NOT MATCHED THEN
+  INSERT (
+    agreement_key,
+    agreement_name,
+    counterparty_code,
+    agreement_type
+  )
+  VALUES (
+    source.agreement_key,
+    source.agreement_name,
+    source.counterparty_code,
+    source.agreement_type
+  );
 ```
 
-### 2. Agreement dimension
+Do not add `AG006` to the fact table.
 
-Notice that this table also contains `counterparty_code`, allowing a direct dimension-to-dimension join.
+## 2. Verify the source data
 
-```sql
-CREATE OR REPLACE TABLE
-  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_dim_agreement
-USING DELTA
-AS
-SELECT *
-FROM VALUES
-  ('AG001', 'Apex Loan Agreement',       'CP001', 'LOAN'),
-  ('AG002', 'Apex Derivative Agreement', 'CP001', 'DERIVATIVE'),
-  ('AG003', 'Beacon Credit Agreement',   'CP002', 'CREDIT'),
-  ('AG004', 'Crest Insurance Agreement', 'CP003', 'INSURANCE'),
-  ('AG005', 'Delta Pension Agreement',   'CP004', 'PENSION')
-AS t(
-  agreement_key,
-  agreement_name,
-  counterparty_code,
-  agreement_type
-);
-```
-
-### 3. Fact table
-
-```sql
-CREATE OR REPLACE TABLE
-  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_fact_trade
-USING DELTA
-AS
-SELECT *
-FROM VALUES
-  ('TR001', 'CP001', 'AG001', 1000.00),
-  ('TR002', 'CP001', 'AG001', 1500.00),
-  ('TR003', 'CP001', 'AG002', 2000.00),
-  ('TR004', 'CP002', 'AG003', 2500.00),
-  ('TR005', 'CP003', 'AG004', 3000.00),
-  ('TR006', 'CP004', 'AG005', 3500.00)
-AS t(
-  trade_key,
-  fact_counterparty_code,
-  fact_agreement_key,
-  trade_amount
-);
-```
-
-## Validate the direct dimension join
+Run the direct dimension join:
 
 ```sql
 SELECT
+  c.counterparty_code,
   c.counterparty_name,
+  a.agreement_key,
   a.agreement_name
 FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_dim_counterparty c
 JOIN `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_dim_agreement a
   ON c.counterparty_code = a.counterparty_code
-ORDER BY c.counterparty_name, a.agreement_name;
+ORDER BY c.counterparty_code, a.agreement_key;
 ```
 
-Expected result: five valid counterparty-agreement combinations.
+The correct result should now contain six agreements, including:
 
-## Mosaic test
+|Counterparty|Agreement|
+|---|---|
+|Apex Bank|Apex Future Agreement|
 
-Create a new Mosaic model named:
+Verify that the fact table has no `AG006`:
 
-**MSTRT-506 – Dimension Relationship Validation**
+```sql
+SELECT *
+FROM `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt506_fact_trade
+WHERE fact_agreement_key = 'AG006';
+```
 
-Import only these three tables and let Mosaic generate its initial relationships.
+Expected result: zero rows.
 
-Before accepting suggestions, inspect whether Mosaic creates:
+## 3. Refresh Strategy
+
+1. Refresh the Mosaic model’s source data or schema.
+    
+2. Republish the model if required.
+    
+3. Refresh the dashboard dataset.
+    
+4. Do not manually create the direct relationship yet.
+    
+
+## 4. Check Visualization 1
+
+The left grid still contains only:
+
+- Counterparty
+    
+- Agreement
+    
+- No metric
+    
+
+There are two possible outcomes:
+
+### Expected with a direct relationship
+
+The grid displays six agreements, including:
 
 ```text
-Counterparty → Agreement
+Apex Bank | AG006 | Apex Future Agreement
 ```
 
-or only:
+### Expected with the current fact-mediated relationship
+
+The grid displays only the original five agreements.
+
+`AG006` will be missing because Strategy searches for a Trade Key connecting Apex Bank to AG006, but no such trade exists.
+
+## 5. Capture Query Details again
+
+If `AG006` is absent and Query Details still shows:
 
 ```text
-Counterparty → Trade ← Agreement
+REL_COUNTERPARTY_TRADE_KEY
+REL_AGREEMENT_TRADE_KEY
 ```
 
-Then create a dashboard named:
+then we have reproduced a visible failure:
 
-**MSTRT-506 – Counterparty Agreement Validation**
+> A valid Counterparty–Agreement relationship is silently excluded because Mosaic uses the Trade fact as the relationship bridge instead of the direct dimension key.
 
-Create two grids:
+That would strengthen the status from “core behavior reproduced” to **“missing-row impact reproduced.”**
 
-### Grid 1: No fact object
+## 6. Prove the manual fix
 
-- Counterparty Name
+After capturing the failure:
+
+1. Manually declare `Counterparty → Agreement` as one-to-many.
     
-- Agreement Name
+2. Publish and refresh.
     
-
-This is the critical test. If Mosaic produces a Cartesian-product warning, MSTRT-506 is reproduced.
-
-### Grid 2: With fact metric
-
-- Counterparty Name
+3. Reopen Visualization 1.
     
-- Agreement Name
+4. Confirm that `Apex Future Agreement` appears.
     
-- Distinct Count of Trade Key
+5. Check that Query Details no longer relies on Trade Key to connect the two attributes.
     
 
-If this grid works while Grid 1 fails, it confirms that Mosaic only understands the relationship through the fact table.
+That gives a clean before-and-after demonstration:
 
-Do not manually create the direct Counterparty-to-Agreement relationship until both results and Query Details have been captured.
+|Model behavior|Agreements displayed|
+|---|--:|
+|Fact-mediated path|5|
+|Direct dimension relationship|6|
