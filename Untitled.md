@@ -1,38 +1,123 @@
-Let’s test **MSTRT-499** with one small table and **one Counterparty attribute that has multiple forms**. The important distinction is that `counterparty_code`, `counterparty_name`, and `legal_entity_id` must be forms of **the same attribute**, rather than three separate attributes on the grid.
+This is a new test: **MSTRT-496 — Filter widget does not warn when the model relationship is missing.**
 
-### 1. Create the test table in Databricks
+The goal is to determine whether Strategy allows a filter from an unrelated table, even though that filter cannot affect the visualization.
 
-Run this in a SQL notebook, using the same catalog and `raw` schema as your earlier tests:
+### 1. Create two unrelated tables
+
+Run this in Databricks:
 
 ```sql
-CREATE OR REPLACE TABLE
-  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt499_counterparty
-USING DELTA
-AS
+CREATE OR REPLACE TABLE raw.mstrt496_counterparty
+USING DELTA AS
 SELECT *
 FROM VALUES
-  ('CP001', 'Apex Bank',       'LEI-APEX-001'),
-  ('CP002', 'Beacon Bank',     'LEI-BEACON-002'),
-  ('CP003', 'Crest Insurance', 'LEI-CREST-003')
-AS t(counterparty_code, counterparty_name, legal_entity_id);
+  ('CP001', 'Apex Bank'),
+  ('CP002', 'Beacon Bank'),
+  ('CP003', 'Crest Insurance'),
+  ('CP004', 'Delta Pension')
+AS t(counterparty_code, counterparty_name);
 ```
 
-Each code has exactly one name and one legal entity ID, making the forms easy to check.
+```sql
+CREATE OR REPLACE TABLE raw.mstrt496_td_entity
+USING DELTA AS
+SELECT *
+FROM VALUES
+  ('TD001', 'TD Securities Canada'),
+  ('TD002', 'TD Securities USA'),
+  ('TD003', 'TD Securities UK')
+AS t(td_entity_code, td_entity_name);
+```
 
-### 2. Create a separate Mosaic model
+These tables deliberately have **no common key and no relationship**.
 
-Add **only** `mstrt499_counterparty` to a new model named **MSTRT-499 Multi-Form Test**. In **Prep and Model → Tables**, create a **Counterparty** attribute using `counterparty_code` as its ID. In that attribute’s setup, add `counterparty_name` as its description form and `legal_entity_id` as another form.
+### 2. Create the Mosaic model
 
-Before moving on, check that the model lists **one Counterparty attribute** with all three forms. If it lists three independent attributes, the test is not set up yet.
+Create a new model named:
+
+```text
+MSTRT-496 Missing Filter Relationship
+```
+
+Add both tables.
+
+Create these attributes:
+
+|Table|Attribute|Forms|
+|---|---|---|
+|`mstrt496_counterparty`|Counterparty|Code and Name|
+|`mstrt496_td_entity`|TD Entity|Code and Name|
+
+In the hierarchy/model view, leave them disconnected:
+
+```text
+Counterparty                 TD Entity
+    ●                            ●
+    No relationship between them
+```
+
+Do not create a bridge, relationship, or merged attribute. Validate and publish the model.
 
 ### 3. Create the dashboard
 
-Publish the model and create a dashboard named **MSTRT-499 Attribute Forms Test**. Add a grid, then put **Counterparty** in **Rows** once.
+Create a dashboard using this model.
 
-Record whether the grid shows the code, name, and legal entity ID as separate subcolumns. Strategy documents controls for selecting which forms display in an individual visualization. [Strategy: Select Which Attribute Forms to Display](https://www2.strategy.com/producthelp/current/MSTRWeb/webhelp/lang_1033/content/Selecting_which_attribute_forms_to_display_in_a_vi.htm)
+Add a grid visualization and place **Counterparty** in Rows. It should show four counterparties:
 
-### 4. Test the display control
+- Apex Bank
+    
+- Beacon Bank
+    
+- Crest Insurance
+    
+- Delta Pension
+    
 
-In the grid’s **Editor** panel, right-click **Counterparty** in Rows and select **Display Attribute Forms**. Clear the checkbox for `legal_entity_id`, apply, and confirm that its subcolumn disappears. Save and reopen the dashboard to check that the choice persists. Then add Counterparty to a second grid and see which forms it shows initially. [Strategy’s documented steps](https://www2.strategy.com/producthelp/current/MSTRWeb/webhelp/lang_1033/content/Selecting_which_attribute_forms_to_display_in_a_vi.htm)
+### 4. Add the unrelated filter
 
-**First checkpoint:** create the table and show me the Mosaic attribute setup screen. The exact form-setting controls depend on what your editor presents, so we can configure that part from your screen.
+Add a filter widget using **TD Entity** or **TD Entity Name**.
+
+Check whether the filter:
+
+- Is created successfully
+    
+- Displays all three TD Entity values
+    
+- Allows you to select one value
+    
+- Shows no warning about the missing relationship
+    
+
+Select only:
+
+```text
+TD Securities Canada
+```
+
+### 5. Observe the grid
+
+The important result is whether the grid remains unchanged and continues showing all four counterparties.
+
+If that happens with no warning, the issue is reproduced:
+
+- The filter looks valid.
+    
+- Users can select values.
+    
+- The selection has no effect on the target grid.
+    
+- The dashboard does not explain that TD Entity and Counterparty are disconnected.
+    
+
+Also open **Query Details** for the grid. The query should access the Counterparty table but not the TD Entity table.
+
+### Expected versus actual
+
+|Behaviour|Expected|Reported problem|
+|---|---|---|
+|Add unrelated filter|Warning or prevent assignment|Filter is accepted|
+|Select filter value|Filter target grid or explain incompatibility|Grid remains unchanged|
+|User feedback|Relationship/path warning|No warning|
+|Query|Valid relationship path required|Filter attribute is absent from visualization query|
+
+The issue can be marked **reproduced** only if the TD Entity selection does nothing and Strategy gives no clear warning.
