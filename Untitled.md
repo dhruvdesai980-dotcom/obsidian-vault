@@ -1,123 +1,93 @@
-This is a new test: **MSTRT-496 — Filter widget does not warn when the model relationship is missing.**
+Sure—create a completely separate model and dashboard for MSTRT-360.
 
-The goal is to determine whether Strategy allows a filter from an unrelated table, even though that filter cannot affect the visualization.
-
-### 1. Create two unrelated tables
-
-Run this in Databricks:
+### 1. Create a new Databricks table
 
 ```sql
-CREATE OR REPLACE TABLE raw.mstrt496_counterparty
+CREATE OR REPLACE TABLE
+  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt360_sales
 USING DELTA AS
 SELECT *
 FROM VALUES
-  ('CP001', 'Apex Bank'),
-  ('CP002', 'Beacon Bank'),
-  ('CP003', 'Crest Insurance'),
-  ('CP004', 'Delta Pension')
-AS t(counterparty_code, counterparty_name);
+  ('S001', DATE '2026-01-05', 'Retail',    100.00),
+  ('S002', DATE '2026-01-10', 'Corporate', 200.00),
+  ('S003', DATE '2026-02-05', 'Retail',    300.00),
+  ('S004', DATE '2026-02-10', 'Corporate', 400.00),
+  ('S005', DATE '2026-03-05', 'Retail',    500.00),
+  ('S006', DATE '2026-03-10', 'Corporate', 600.00)
+AS t(sale_id, sale_date, customer_type, sale_amount);
 ```
 
-```sql
-CREATE OR REPLACE TABLE raw.mstrt496_td_entity
-USING DELTA AS
-SELECT *
-FROM VALUES
-  ('TD001', 'TD Securities Canada'),
-  ('TD002', 'TD Securities USA'),
-  ('TD003', 'TD Securities UK')
-AS t(td_entity_code, td_entity_name);
-```
+This produces six rows: two in each month from January through March.
 
-These tables deliberately have **no common key and no relationship**.
+### 2. Create a new Mosaic model
 
-### 2. Create the Mosaic model
-
-Create a new model named:
+Name it:
 
 ```text
-MSTRT-496 Missing Filter Relationship
+MSTRT-360 Filter Scope Model
 ```
 
-Add both tables.
+Add only `mstrt360_sales`, then create:
 
-Create these attributes:
+- **Sale** attribute using `sale_id`
+    
+- **Sale Date** time attribute using `sale_date`
+    
+- **Customer Type** attribute using `customer_type`
+    
+- **Sale Amount** metric using `SUM(sale_amount)`
+    
+- **Sale Count** metric using `COUNT DISTINCT(sale_id)`
+    
 
-|Table|Attribute|Forms|
-|---|---|---|
-|`mstrt496_counterparty`|Counterparty|Code and Name|
-|`mstrt496_td_entity`|TD Entity|Code and Name|
+Validate and publish the model.
 
-In the hierarchy/model view, leave them disconnected:
+### 3. Create a new dashboard
+
+Name it:
 
 ```text
-Counterparty                 TD Entity
-    ●                            ●
-    No relationship between them
+MSTRT-360 Page vs Chapter Filter Test
 ```
 
-Do not create a bridge, relationship, or merged attribute. Validate and publish the model.
+Create this layout:
 
-### 3. Create the dashboard
-
-Create a dashboard using this model.
-
-Add a grid visualization and place **Counterparty** in Rows. It should show four counterparties:
-
-- Apex Bank
+- Chapter 1
     
-- Beacon Bank
+    - Page 1: Sale Count KPI and a grid with Sale Date, Sale and Sale Amount
+        
+    - Page 2: the same Sale Count KPI and grid
+        
+- Chapter 2
     
-- Crest Insurance
-    
-- Delta Pension
-    
+    - Page 1: the same Sale Count KPI and grid
+        
 
-### 4. Add the unrelated filter
+Before adding filters, every page should show a Sale Count of **6**.
 
-Add a filter widget using **TD Entity** or **TD Entity Name**.
+### 4. Add the filter from Chapter 1, Page 1
 
-Check whether the filter:
+While Chapter 1 → Page 1 is open:
 
-- Is created successfully
+1. Add `Sale Date` to the dashboard/page filter area.
     
-- Displays all three TD Entity values
+2. Select January 2026.
     
-- Allows you to select one value
+3. Confirm Page 1 changes from **6 to 2**.
     
-- Shows no warning about the missing relationship
+4. Open Chapter 1 → Page 2 without adding a filter there.
+    
+5. Open Chapter 2 → Page 1.
     
 
-Select only:
+### Expected comparison
 
-```text
-TD Securities Canada
-```
+|Location|If the reported behavior occurs|
+|---|--:|
+|Chapter 1 → Page 1|2|
+|Chapter 1 → Page 2|2|
+|Chapter 2 → Page 1|6|
 
-### 5. Observe the grid
+If both Chapter 1 pages change to 2 while Chapter 2 stays at 6, MSTRT-360 is reproduced: the apparent page filter is actually chapter-scoped.
 
-The important result is whether the grid remains unchanged and continues showing all four counterparties.
-
-If that happens with no warning, the issue is reproduced:
-
-- The filter looks valid.
-    
-- Users can select values.
-    
-- The selection has no effect on the target grid.
-    
-- The dashboard does not explain that TD Entity and Counterparty are disconnected.
-    
-
-Also open **Query Details** for the grid. The query should access the Counterparty table but not the TD Entity table.
-
-### Expected versus actual
-
-|Behaviour|Expected|Reported problem|
-|---|---|---|
-|Add unrelated filter|Warning or prevent assignment|Filter is accepted|
-|Select filter value|Filter target grid or explain incompatibility|Grid remains unchanged|
-|User feedback|Relationship/path warning|No warning|
-|Query|Valid relationship path required|Filter attribute is absent from visualization query|
-
-The issue can be marked **reproduced** only if the TD Entity selection does nothing and Strategy gives no clear warning.
+Also record whether Page 2 visibly indicates that the January filter is active. The lack of an inherited-filter indicator is part of the reported usability problem.
