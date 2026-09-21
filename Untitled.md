@@ -1,135 +1,146 @@
-For **MSTRT-537**, test whether one source visualization can simultaneously:
+For **MSTRT-487**, the objective is to test whether a **Consumer-only user** can open a dashboard backed by a Mosaic model in **Live mode**, while the same user can open an equivalent Import-mode dashboard.
 
-1. Filter another visualization using **Target Visualization**, and
-    
-2. Open a destination using a **Contextual Link**.
-    
+A second Consumer test account is required. Testing as the model owner or administrator will not reproduce a permission-specific problem.
 
-We’ll create a separate setup.
-
-## 1. Create a net-new table
+## 1. Create a net-new test table
 
 ```sql
 CREATE OR REPLACE TABLE
-  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt537_sales
+  `d4001-centralus-tdvip-tdsbi_mstrt_catalog`.raw.mstrt487_sales
 USING DELTA AS
 SELECT *
 FROM VALUES
-  ('S001', 'Canada', 'Technology', 'Laptop',  1200.00),
-  ('S002', 'Canada', 'Technology', 'Monitor',  400.00),
-  ('S003', 'Canada', 'Furniture',  'Desk',     600.00),
-  ('S004', 'USA',    'Technology', 'Laptop',  1300.00),
-  ('S005', 'USA',    'Furniture',  'Chair',    300.00),
-  ('S006', 'UK',     'Technology', 'Monitor',  450.00)
-AS t(sale_id, country, category, product, sale_amount);
+  ('S001', 'Canada', 'Technology', 1200.00),
+  ('S002', 'Canada', 'Furniture',   600.00),
+  ('S003', 'USA',    'Technology', 1300.00),
+  ('S004', 'USA',    'Furniture',   300.00),
+  ('S005', 'UK',     'Technology',  450.00)
+AS t(sale_id, country, category, sale_amount);
 ```
 
-## 2. Create the model
-
-Create a model named:
-
-```text
-MSTRT-537 Contextual Linking Model
-```
-
-Add only `mstrt537_sales` and create:
-
-- Sale using `sale_id`
-    
-- Country using `country`
-    
-- Category using `category`
-    
-- Product using `product`
-    
-- Sale Amount using `SUM(sale_amount)`
-    
-
-Validate and publish.
-
-## 3. Build the dashboard
+## 2. Create the Live model
 
 Create:
 
 ```text
-MSTRT-537 Contextual Link Test
+MSTRT-487 Live Model
 ```
 
-On **Page 1**, add:
+Add `mstrt487_sales` and configure its data-access mode as **Live**.
 
-- **Visualization A — Source:** bar chart with Country and Sale Amount
-    
-- **Visualization B — Target:** grid with Country, Category, Product and Sale Amount
-    
+Create:
 
-Create **Page 2 — Country Details** containing:
-
-- Country
+- Sale from `sale_id`
     
-- Product
+- Country from `country`
     
-- Sale Amount
+- Category from `category`
+    
+- Sale Amount as `SUM(sale_amount)`
     
 
-Save the dashboard.
+Validate and publish.
 
-## 4. Test Target Visualization first
+## 3. Create the Live dashboard
 
-Select Visualization A and configure it to target Visualization B.
+Create:
 
-Click **Canada** in the bar chart.
+```text
+MSTRT-487 Live Dashboard
+```
 
-Expected result:
+Add:
 
-- Visualization B displays only Canadian rows.
+- Grid: Country, Category and Sale Amount
     
-- The chart-to-grid targeting works.
+- KPI: Sum of Sale Amount
     
-
-Take a screenshot as the baseline.
-
-## 5. Add the Contextual Link
-
-On the same source, Visualization A:
-
-1. Open its menu or configuration panel.
-    
-2. Add a **Contextual Link**.
-    
-3. Set the destination to **Page 2 — Country Details**.
-    
-4. Pass the selected Country as context.
-    
-5. Apply the configuration.
+- Bar chart: Country by Sale Amount
     
 
-Watch carefully for what happens to the existing Target Visualization setting.
+As the author, confirm:
 
-## 6. Test both behaviours
-
-Click or right-click Canada in Visualization A.
-
-Check whether:
-
-- Visualization B still filters to Canada.
+- Five underlying rows are represented.
     
-- The contextual link remains available.
+- Total Sale Amount is **3,850**.
     
-- Opening the link takes you to Page 2 filtered to Canada.
+- Canada = **1,800**
     
-- Configuring the contextual link removed or disabled Target Visualization.
+- USA = **1,600**
     
-- Re-enabling Target Visualization removes the contextual link.
+- UK = **450**
     
 
-## Conclusion criteria
+## 4. Create the Import-mode control
 
-|Observation|Conclusion|
-|---|---|
-|Both functions remain configured and work|Not reproduced|
-|Adding Contextual Link removes/disables Target Visualization|MSTRT-537 reproduced|
-|Adding Target Visualization removes/disables Contextual Link|MSTRT-537 reproduced|
-|Both appear configured but only one works|MSTRT-537 reproduced|
-|Feature is unsupported only for the chosen visualization type|Retest with a grid before concluding|
+Create a second model using the same table:
 
-The exact evidence we want is a before-and-after screenshot of Visualization A’s settings. First configure **Target Visualization**, then add **Contextual Link** and capture whether the target setting disappears. The reported workaround—putting the link in a panel—should be tested only after confirming the limitation.
+```text
+MSTRT-487 Import Model
+```
+
+Set this one to **Import/In-memory mode**, publish it, and build:
+
+```text
+MSTRT-487 Import Dashboard
+```
+
+Use the same three visualizations and verify the same results.
+
+## 5. Configure the Consumer user
+
+Give the Consumer test user equivalent viewing access to:
+
+- Both dashboards
+    
+- Both Mosaic models/datasets
+    
+- The folder containing them
+    
+- Any required data-source or connection objects
+    
+
+Do not give the user Author, Architect, or Administrator privileges.
+
+Merely proving that the user can query the Databricks table is not enough. Live dashboards may also require access to the Strategy connection, model and execution objects.
+
+## 6. Test with a clean Consumer session
+
+Use a private/incognito browser and sign in as the Consumer user.
+
+Test in this order:
+
+1. Open `MSTRT-487 Live Dashboard`.
+    
+2. Record whether it loads or displays **Application Error**.
+    
+3. Open `MSTRT-487 Import Dashboard`.
+    
+4. Record whether it loads successfully.
+    
+5. Refresh and repeat once to rule out a temporary failure.
+    
+
+Capture:
+
+- The Consumer user’s application role
+    
+- Both dashboard permissions
+    
+- Both model permissions
+    
+- The complete Live-mode error
+    
+- Whether the Import dashboard works
+    
+
+## Interpretation
+
+|Live dashboard|Import dashboard|Conclusion|
+|---|---|---|
+|Fails|Works|MSTRT-487 reproduced|
+|Works|Works|Not reproduced|
+|Fails|Fails|General sharing/permission problem|
+|Works|Fails|Import dataset access or refresh problem|
+
+If Live fails, temporarily grant only the missing connection/model privilege and retest. If that resolves it, document it as a permission dependency rather than a general inability of Consumers to use Live-mode dashboards.
