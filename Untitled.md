@@ -1,47 +1,72 @@
-The screenshot confirms:
+This is good progress: the first CSV completed successfully.
+
+From the task states:
+
+- `load_l_internal_counterparty` — succeeded
+- `archive_internal_counterparty` — succeeded
+- `delete_s_internal_counterparty` — succeeded
+- `load_s_internal_counterparty` — succeeded
+- `truncate_l_internal_counterparty_amend` — succeeded
+- `load_l_internal_counterparty_amend` — failed
+
+The new error is:
 
 ```
-SYSTEM,BOOK
-"ATLS","TD_AMS_CTNV"
+ORA-00904: "MAPPED": invalid identifier
 ```
 
-Therefore:
-
-- The file is comma-separated.
-- Double quotes are used around values.
-- The first row is a header.
-- This file contains two columns: `SYSTEM` and `BOOK`.
-
-Use the following `_bulk_load()` implementation. It reads the header and passes it to Oracle as the target-column list.
+The second CSV contains:
 
 ```
-def _bulk_load(table: str, source: str) -> None:    source_path = Path(source)    if not source_path.exists():        raise AirflowException(            f"Input file does not exist: {source_path}"        )    hook = OracleHook(oracle_conn_id=ORACLE_CONN_ID)    with source_path.open(        mode="r",        encoding="utf-8-sig",        newline="",    ) as csv_file:        reader = csv.reader(            csv_file,            delimiter=",",            quotechar='"',        )        # The first row contains Oracle column names.        target_fields = next(reader, None)        if not target_fields:            raise AirflowException(                f"Input file is empty: {source_path}"            )        target_fields = [            column.strip() for column in target_fields        ]        def prepared_rows():            for line_number, row in enumerate(reader, start=2):                if not row:                    continue                if len(row) != len(target_fields):                    raise AirflowException(                        f"Column-count mismatch in {source_path} "                        f"at line {line_number}: expected "                        f"{len(target_fields)}, found {len(row)}"                    )                yield tuple(                    None if value == "" else value                    for value in row                )        hook.bulk_insert_rows(            table=table,            rows=prepared_rows(),            target_fields=target_fields,            commit_every=5000,        )
+SYSTEM_NAME,CP_CODE,RESPONSIBILITY_CENTER,COMPANY,TD_SITE,TD_ENTITY,MAPPED
 ```
 
-Also ensure this is included at the top:
+Airflow generated an Oracle insert containing `MAPPED`, but `COL.L_INTERNAL_COUNTERPARTY_AMEND` apparently does not have a column with that name.
 
-```
-import csv
-```
-
-Check the headers of the other two files:
-
-```
-head -n 1 ~/airflow/data/incoming/inter_affiliate_xref20251021.csv
-head -n 1 ~/airflow/data/incoming/repo_client_mapping20251021.csv
-```
-
-The header names must exist as columns in their corresponding Oracle loading tables.
-
-After saving:
+Check the actual Oracle columns before changing the code:
 
 ```
 cd ~/airflow-lab
 source .venv/bin/activate
 export AIRFLOW_HOME="$HOME/airflow"
 
-python -m py_compile ~/airflow/dags/apr_late_load.py
-airflow dags list-import-errors
+python - <<'PY'
+from airflow.providers.oracle.hooks.oracle import OracleHook
+
+hook = OracleHook(oracle_conn_id="oracle_apr_conn")
+
+rows = hook.get_records("""
+    SELECT column_id, column_name, data_type
+    FROM all_tab_columns
+    WHERE owner = 'COL'
+      AND table_name = 'L_INTERNAL_COUNTERPARTY_AMEND'
+    ORDER BY column_id
+""")
+
+for column_id, column_name, data_type in rows:
+    print(column_id, column_name, data_type)
+PY
 ```
 
-If both commands finish without errors, confirm Airflow shows a new DAG version. Before triggering it, verify this is a safe staging environment because the first loading table was already truncated during the failed run.
+Compare that output with the CSV header. Most likely, one of these is true:
+
+- `MAPPED` is not loaded by the original SSIS package.
+- `MAPPED` maps to a differently named Oracle column.
+- The Oracle table definition changed after the CSV was produced.
+- The SSIS data flow calculated or discarded that field.
+
+Do not simply remove `MAPPED` until we confirm the original SSIS column mapping.
+
+Also, do not start an entirely new run right now:
+
+- The first CSV has already been moved into the archive directory.
+- The second loading table has already been truncated.
+- A new full run may fail its file check because the first CSV is no longer in `incoming`.
+
+After correcting the mapping, rerun/clear only:
+
+```
+load_l_internal_counterparty_amend
+```
+
+and its downstream tasks. Send the Oracle column output next, and we can make the exact source-to-target mapping.
