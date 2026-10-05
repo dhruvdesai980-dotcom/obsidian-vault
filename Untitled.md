@@ -1,46 +1,39 @@
-Yes—this screenshot confirms the problem is exactly line 36:
+The screenshot confirms:
 
 ```
-OracleHook(    oracle_conn_id=ORACLE_CONN_ID).bulk_load(table, str(source_path))
+SYSTEM,BOOK
+"ATLS","TD_AMS_CTNV"
 ```
 
-Replace lines 32–36 with the following.
+Therefore:
 
-First, add this near the other imports:
+- The file is comma-separated.
+- Double quotes are used around values.
+- The first row is a header.
+- This file contains two columns: `SYSTEM` and `BOOK`.
+
+Use the following `_bulk_load()` implementation. It reads the header and passes it to Oracle as the target-column list.
+
+```
+def _bulk_load(table: str, source: str) -> None:    source_path = Path(source)    if not source_path.exists():        raise AirflowException(            f"Input file does not exist: {source_path}"        )    hook = OracleHook(oracle_conn_id=ORACLE_CONN_ID)    with source_path.open(        mode="r",        encoding="utf-8-sig",        newline="",    ) as csv_file:        reader = csv.reader(            csv_file,            delimiter=",",            quotechar='"',        )        # The first row contains Oracle column names.        target_fields = next(reader, None)        if not target_fields:            raise AirflowException(                f"Input file is empty: {source_path}"            )        target_fields = [            column.strip() for column in target_fields        ]        def prepared_rows():            for line_number, row in enumerate(reader, start=2):                if not row:                    continue                if len(row) != len(target_fields):                    raise AirflowException(                        f"Column-count mismatch in {source_path} "                        f"at line {line_number}: expected "                        f"{len(target_fields)}, found {len(row)}"                    )                yield tuple(                    None if value == "" else value                    for value in row                )        hook.bulk_insert_rows(            table=table,            rows=prepared_rows(),            target_fields=target_fields,            commit_every=5000,        )
+```
+
+Also ensure this is included at the top:
 
 ```
 import csv
 ```
 
-Then use:
+Check the headers of the other two files:
 
 ```
-def _bulk_load(table: str, source: str) -> None:    source_path = Path(source)    if not source_path.exists():        raise AirflowException(            f"Input file does not exist: {source_path}"        )    hook = OracleHook(oracle_conn_id=ORACLE_CONN_ID)    with source_path.open(        mode="r",        encoding="utf-8-sig",        newline="",    ) as csv_file:        reader = csv.reader(            csv_file,            delimiter=",",            quotechar='"',        )        # Uncomment only if the CSV has a header row:        # next(reader, None)        rows = (            tuple(None if value == "" else value for value in row)            for row in reader        )        hook.bulk_insert_rows(            table=table,            rows=rows,            commit_every=5000,        )
+head -n 1 ~/airflow/data/incoming/inter_affiliate_xref20251021.csv
+head -n 1 ~/airflow/data/incoming/repo_client_mapping20251021.csv
 ```
 
-This changes only the unsupported loading mechanism:
+The header names must exist as columns in their corresponding Oracle loading tables.
 
-```
-bulk_load()          → unsupported for OracleHook
-bulk_insert_rows()   → supported Oracle batch insertion
-```
-
-Before running it, confirm:
-
-- The files are comma-separated.
-- They use UTF-8 encoding.
-- Whether the first line is a header.
-- CSV column order matches the Oracle table column order.
-
-To inspect only the beginning of the first file:
-
-```
-head -n 2 ~/airflow/data/incoming/internal_counterparty20251021.csv
-```
-
-Do not share those lines if they contain sensitive business data. You only need to determine whether the first line contains column names.
-
-After saving the DAG:
+After saving:
 
 ```
 cd ~/airflow-lab
@@ -51,6 +44,4 @@ python -m py_compile ~/airflow/dags/apr_late_load.py
 airflow dags list-import-errors
 ```
 
-Airflow should detect the saved file automatically. Confirm that no import errors appear and that the UI shows a newer DAG version.
-
-Do not rerun it yet if this is a production database: the earlier successful `TRUNCATE` has likely already emptied `COL.L_INTERNAL_COUNTERPARTY`. First verify whether this is an expendable loading/staging table and confirm the CSV structure.
+If both commands finish without errors, confirm Airflow shows a new DAG version. Before triggering it, verify this is a safe staging environment because the first loading table was already truncated during the failed run.
