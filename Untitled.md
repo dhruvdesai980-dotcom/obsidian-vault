@@ -1,51 +1,57 @@
-The command completed successfully but returned no results. That means those CSV files are not currently stored anywhere on the `D:` drive under those names.
-
-Most likely, `APR_LATE_LOAD.dtsx`:
-
-- Downloads them from SFTP/FTP when it runs;
-- Reads them from a network/UNC path;
-- Generates them temporarily and later archives/deletes them; or
-- Uses different filenames than our Airflow DAG currently assumes.
-
-### Inspect the SSIS package
-
-Run these commands one at a time in PowerShell.
-
-First, locate the exact package file:
+We found the actual Windows landing directory in the SSIS package:
 
 ```
-$pkg = Get-ChildItem "D:\Apps\SSIS\packages\COLLATERAL" -File -Filter "APR_LATE_LOAD*"
-$pkg.FullName
+E:\loaddata\Collateral\FIST_CALYPSO\incoming
 ```
 
-Then search inside it:
+The screenshot specifically confirms this file:
 
 ```
-Select-String -Path $pkg.FullName -Pattern "\.csv|WinSCP|SFTP|FTP|counterparty|repo|FileName|ConnectionString" -Context 3,3
+E:\loaddata\Collateral\FIST_CALYPSO\incoming\internal_counterparty.csv
 ```
 
-If the output is too large, save it to a text file:
+So the earlier search returned nothing because we searched `D:`, while the data is expected under `E:`.
+
+Run:
 
 ```
-Select-String -Path $pkg.FullName -Pattern "\.csv|WinSCP|SFTP|FTP|counterparty|repo|FileName|ConnectionString" -Context 3,3 | Out-File "$env:USERPROFILE\Desktop\APR_LATE_LOAD_search.txt"
+Get-ChildItem "E:\loaddata\Collateral\FIST_CALYPSO\incoming" -Force
 ```
 
-Open the result:
+To search the complete application directory:
 
 ```
-notepad "$env:USERPROFILE\Desktop\APR_LATE_LOAD_search.txt"
+Get-ChildItem "E:\loaddata\Collateral\FIST_CALYPSO" -Recurse -File -ErrorAction SilentlyContinue |
+Where-Object { $_.Name -match "counterparty|repo.*client" } |
+Select-Object FullName,LastWriteTime,Length
 ```
 
-Look for:
+The package also references:
 
-- A UNC path beginning with `\\server\folder`
-- An SFTP hostname
-- WinSCP executable or script
-- Package variables containing file paths
-- `.csv`, `.txt`, `.dat`, or `.ctl` filenames
-- `SourceConnectionFlatFile`
-- `ConnectionString`
+```
+User::FileName
+User::winscp_result
+WinSCP_Results_File
+```
 
-Be careful when sharing the output because the package XML might contain usernames or passwords. Mask those values first.
+This confirms that the SSIS package uses WinSCP and dynamically determines at least some filenames. Therefore, the files may only appear in `incoming` after the WinSCP transfer runs.
 
-At this stage, do not assume the three filenames in the generated DAG are correct. We should use the actual filenames and source location extracted from `APR_LATE_LOAD.dtsx`, then update the Airflow DAG accordingly.
+To show every CSV reference from the package:
+
+```
+Select-String -Path "D:\Apps\SSIS\packages\COLLATERAL\APR_LATE_LOAD.dtsx" -Pattern "\.csv" -Context 2,2
+```
+
+For the Airflow POC, after confirming the files, copy them from Windows into WSL:
+
+```
+Copy-Item "E:\loaddata\Collateral\FIST_CALYPSO\incoming\*.csv" "\\wsl$\rhel8_TAP3507\home\wsl2user\airflow\data\incoming\"
+```
+
+Then verify inside WSL:
+
+```
+ls -lh "$HOME/airflow/data/incoming"
+```
+
+At this point, `internal_counterparty.csv` is confirmed. We still need to verify the exact names for the amended counterparty and repo-client files before triggering Airflow. Use only approved/non-sensitive data for the POC.
