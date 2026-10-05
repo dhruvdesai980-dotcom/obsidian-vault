@@ -1,22 +1,37 @@
-Both folders are empty:
+Yes—the CSV files are now successfully copied into Airflow’s incoming folder.
 
-- Original SSIS incoming folder: `E:\loaddata\Collateral\FIST_CALYPSO\incoming`
-- Airflow incoming folder: `~/airflow/data/incoming`
-
-This is normal if SSIS moves files to an archive after processing or if today’s WinSCP download has not occurred.
-
-Search the likely SSIS directories in PowerShell:
+A consistent dated set appears to be:
 
 ```
-Get-ChildItem "E:\loaddata\Collateral\FIST_CALYPSO" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "internal.*counterparty|repo.*client.*mapping" } | Select-Object FullName,LastWriteTime,Length
+internal_counterparty20251021.csv
+repo_client_mapping20251021.csv
+inter_affiliate_xref20251021.csv
 ```
 
-Also search the FTP landing folders referenced by the package:
+The smaller `20230418` files are likely old test or historical files.
+
+Before mapping the third file, confirm that `inter_affiliate_xref` corresponds to the staging table currently called `I_INTERNAL_COUNTERPARTY_AMEND`:
 
 ```
-Get-ChildItem "E:\ftproot\ftpsite\Collateral" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "internal.*counterparty|repo.*client.*mapping" } | Select-Object FullName,LastWriteTime,Length
+Select-String -Path "D:\Apps\SSIS\packages\COLLATERAL\APR_LATE_LOAD.dtsx" -Pattern "inter_affiliate_xref|I_INTERNAL_COUNTERPARTY_AMEND" -Context 4,4
 ```
 
-If files are found in an archive folder, copy an approved historical set into the open WSL `incoming` window for the POC.
+If confirmed, update the DAG parameters to:
 
-If nothing is found, the files only exist on the remote SFTP server and are downloaded by WinSCP during execution. In that case, the next migration step is to reproduce the WinSCP download using an Airflow SFTP connection. Do not run the production SSIS package merely to obtain files without confirming that it is safe, because it may also load or modify Oracle tables.
+```
+"internal_counterparty_file": (    "/home/wsl2user/airflow/data/incoming/"    "internal_counterparty20251021.csv"),"internal_counterparty_amend_file": (    "/home/wsl2user/airflow/data/incoming/"    "inter_affiliate_xref20251021.csv"),"repo_client_mapping_file": (    "/home/wsl2user/airflow/data/incoming/"    "repo_client_mapping20251021.csv"),
+```
+
+Also replace the empty `download_command` with a validation command:
+
+```
+"download_command": (    "test -f /home/wsl2user/airflow/data/incoming/internal_counterparty20251021.csv && "    "test -f /home/wsl2user/airflow/data/incoming/inter_affiliate_xref20251021.csv && "    "test -f /home/wsl2user/airflow/data/incoming/repo_client_mapping20251021.csv"),
+```
+
+Then save the DAG and validate the files:
+
+```
+ls -lh "$HOME/airflow/data/incoming"
+```
+
+Do not trigger it yet unless `oracle_apr_conn` points to an approved development/test schema. The DAG contains truncate, bulk-load, merge and commit operations, so running it can modify Oracle tables. The XML mapping for `inter_affiliate_xref` should also be confirmed first.
