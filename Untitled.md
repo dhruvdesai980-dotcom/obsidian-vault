@@ -1,57 +1,77 @@
-We found the actual Windows landing directory in the SSIS package:
+The SSIS package confirms the files are date-stamped and handled through WinSCP. The relevant patterns are:
+
+```
+repo_client_mapping*.csv
+internal_counterparty*.csv
+```
+
+The Windows folder used for processing is:
 
 ```
 E:\loaddata\Collateral\FIST_CALYPSO\incoming
 ```
 
-The screenshot specifically confirms this file:
+Your `Copy-Item` failed because the `\\wsl$\...` destination was unavailable—not necessarily because the CSV files were missing.
+
+### Use WSL directly instead
+
+Open the WSL terminal and run:
 
 ```
-E:\loaddata\Collateral\FIST_CALYPSO\incoming\internal_counterparty.csv
+mkdir -p "$HOME/airflow/data/incoming"
+mkdir -p "$HOME/airflow/data/archive"
+mkdir -p "$HOME/airflow/data/failure"
+
+ls -lh /mnt/e/loaddata/Collateral/FIST_CALYPSO/incoming
 ```
 
-So the earlier search returned nothing because we searched `D:`, while the data is expected under `E:`.
-
-Run:
+Search for the relevant files:
 
 ```
-Get-ChildItem "E:\loaddata\Collateral\FIST_CALYPSO\incoming" -Force
+find /mnt/e/loaddata/Collateral/FIST_CALYPSO/incoming \
+  -maxdepth 1 -type f \
+  \( -iname "internal_counterparty*.csv" -o -iname "repo_client_mapping*.csv" \)
 ```
 
-To search the complete application directory:
+If they appear, copy them:
 
 ```
-Get-ChildItem "E:\loaddata\Collateral\FIST_CALYPSO" -Recurse -File -ErrorAction SilentlyContinue |
-Where-Object { $_.Name -match "counterparty|repo.*client" } |
-Select-Object FullName,LastWriteTime,Length
+cp /mnt/e/loaddata/Collateral/FIST_CALYPSO/incoming/*.csv \
+   "$HOME/airflow/data/incoming/"
 ```
 
-The package also references:
-
-```
-User::FileName
-User::winscp_result
-WinSCP_Results_File
-```
-
-This confirms that the SSIS package uses WinSCP and dynamically determines at least some filenames. Therefore, the files may only appear in `incoming` after the WinSCP transfer runs.
-
-To show every CSV reference from the package:
-
-```
-Select-String -Path "D:\Apps\SSIS\packages\COLLATERAL\APR_LATE_LOAD.dtsx" -Pattern "\.csv" -Context 2,2
-```
-
-For the Airflow POC, after confirming the files, copy them from Windows into WSL:
-
-```
-Copy-Item "E:\loaddata\Collateral\FIST_CALYPSO\incoming\*.csv" "\\wsl$\rhel8_TAP3507\home\wsl2user\airflow\data\incoming\"
-```
-
-Then verify inside WSL:
+Verify:
 
 ```
 ls -lh "$HOME/airflow/data/incoming"
 ```
 
-At this point, `internal_counterparty.csv` is confirmed. We still need to verify the exact names for the amended counterparty and repo-client files before triggering Airflow. Use only approved/non-sensitive data for the POC.
+### Important discrepancy in the converted DAG
+
+The SSIS package appears to use date-stamped filenames, such as:
+
+```
+internal_counterparty20251001.csv
+repo_client_mapping20251001.csv
+```
+
+But the Airflow DAG currently expects fixed filenames:
+
+```
+internal_counterparty.csv
+internal_counterparty_amend.csv
+repo_client_mapping.csv
+```
+
+Also, the screenshot does not yet confirm that `internal_counterparty_amend.csv` exists in the original SSIS package.
+
+Therefore, don’t trigger the DAG yet. First run:
+
+```
+Select-String `
+  -Path "D:\Apps\SSIS\packages\COLLATERAL\APR_LATE_LOAD.dtsx" `
+  -Pattern "amend|internal_counterparty|repo_client_mapping" `
+  -Context 2,2
+```
+
+We need to modify the DAG to select the correct date-stamped files and remove `internal_counterparty_amend.csv` if that input is not actually part of `APR_LATE_LOAD.dtsx`.
