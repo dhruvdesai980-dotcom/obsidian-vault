@@ -1,52 +1,60 @@
-The query did not run because this terminal is using the system Python, where Airflow is not installed:
+Your virtual environment is correct now, but the query failed for a different reason:
 
 ```
-ModuleNotFoundError: No module named 'airflow.providers'
+AirflowNotFoundException:
+The conn_id `oracle_apr_conn` isn't defined
 ```
 
-Notice that `(.venv)` is missing from your prompt.
+In this standalone Python execution, Airflow 3’s task SDK cannot retrieve the connection context available to running Airflow tasks. The connection still exists in the UI—your DAG already used it successfully.
 
-Run these commands first:
+For this diagnostic query, connect directly with `python-oracledb`. The password will be requested securely and will not appear on screen or in command history.
 
 ```
 cd ~/airflow-lab
 source .venv/bin/activate
 
-export AIRFLOW_HOME="$HOME/airflow"
 export LD_LIBRARY_PATH="$HOME/oracle/instantclient_23_26:$LD_LIBRARY_PATH"
 
-which python
-python -c "import airflow; print(airflow.__version__)"
-```
-
-You should see:
-
-```
-/home/wsl2user/airflow-lab/.venv/bin/python
-3.3.2
-```
-
-Then run the column query again:
-
-```
 python - <<'PY'
-from airflow.providers.oracle.hooks.oracle import OracleHook
+import getpass
+import os
+import oracledb
 
-hook = OracleHook(oracle_conn_id="oracle_apr_conn")
-
-rows = hook.get_records(
-    """
-    SELECT column_id, column_name, data_type
-    FROM all_tab_columns
-    WHERE owner = 'COL'
-      AND table_name = 'L_INTERNAL_COUNTERPARTY_AMEND'
-    ORDER BY column_id
-    """
+oracledb.init_oracle_client(
+    lib_dir=os.path.expanduser(
+        "~/oracle/instantclient_23_26"
+    )
 )
 
-for column_id, column_name, data_type in rows:
-    print(column_id, column_name, data_type)
+password = getpass.getpass("Oracle password: ")
+
+dsn = oracledb.makedsn(
+    "baocacdbv3-scan.ocac2.dev.tdbank.ca",
+    1521,
+    service_name="bis_dev_tdsrv.bis_dev.tdbank.ca",
+)
+
+with oracledb.connect(
+    user="col",
+    password=password,
+    dsn=dsn,
+) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT column_id, column_name, data_type
+            FROM all_tab_columns
+            WHERE owner = 'COL'
+              AND table_name = 'L_INTERNAL_COUNTERPARTY_AMEND'
+            ORDER BY column_id
+            """
+        )
+
+        for column_id, column_name, data_type in cursor:
+            print(column_id, column_name, data_type)
 PY
 ```
 
-The key issue was simply that you opened a new terminal and the Airflow virtual environment was no longer active. Virtual-environment activation applies separately to each terminal window.
+Enter the same Oracle password stored in `oracle_apr_conn` when prompted.
+
+Only share the resulting column names and data types—not the password. That output will tell us what the CSV field `MAPPED` should map to or whether it should be excluded.
