@@ -1,105 +1,54 @@
-Yes — the problem is clear from the screenshots. Your Airflow DAG itself is reaching Oracle correctly; the failure is caused by **how `TABLE_LOAD_CHECK` is being invoked**.
-
-Your current code does this:
+I can see your `i_gstm_load.py` code. The problem is in the `load_i_gstm_detail` task, specifically this SQL:
 
 ```
-result = hook.get_first(    "select TABLE_LOAD_CHECK(:table_name, :date_key) from dual",    parameters={        "table_name": table_name,        "date_key": date_ctx["datekey"],    },)
+_hook().run(    """    insert into COL.I_GSTM_DETAIL    select *    from COL.MASTER_DATA_I_GSTM_VW    where bus_process_date = :bus_process_date    """,    parameters={"bus_process_date": date_ctx["bus_process_date"]},)
 ```
 
-The Airflow log shows:
+Your earlier error was:
 
 ```
-ORA-14552: cannot perform a DDL, commit or rollback inside a query or DML
-ORA-06512: at "COL.TABLE_LOAD_CHECK", line 8
+ORA-00947: not enough values
 ```
 
-### What's happening
+This means Oracle expects more values for the destination table than the `SELECT *` is supplying.
 
-`get_first()` turns your call into a normal SQL query:
+### What we need to fix
 
-```
-SELECT COL.TABLE_LOAD_CHECK(...) FROM dual;
-```
+Before changing the Python code, let's establish the actual source-to-target mapping. Since this is an SSIS-to-Airflow migration, we should preserve the original SSIS transformation logic rather than guess column mappings.
 
-Oracle therefore treats `TABLE_LOAD_CHECK` as a function being executed **inside a SQL statement**.
-
-But somewhere around **line 8 of `COL.TABLE_LOAD_CHECK`**, the function apparently performs something like:
+Run this query in Oracle to compare the columns in both objects:
 
 ```
-COMMIT;
-ROLLBACK;
--- or DDL
-TRUNCATE ...
-CREATE ...
-ALTER ...
+SELECT
+    CASE
+        WHEN table_name = 'I_GSTM_DETAIL' THEN 'TARGET'
+        ELSE 'SOURCE'
+    END AS object_type,
+    table_name,
+    column_id,
+    column_name,
+    data_type
+FROM all_tab_columns
+WHERE owner = 'COL'
+  AND table_name IN (
+      'I_GSTM_DETAIL',
+      'MASTER_DATA_I_GSTM_VW'
+  )
+ORDER BY object_type, column_id;
 ```
 
-Oracle does not permit that when a function is invoked from a `SELECT`.
+This will show whether the source view has fewer columns, whether the column order differs, or whether additional destination columns need values.
 
-So this is not an Airflow connection problem and not a bind-variable problem. The function is actually being reached successfully. The execution context is the problem.
+### One additional observation
 
-## Change `check_row_count`
-
-Instead of calling the function through:
+Your two tasks:
 
 ```
-SELECT ... FROM dual
+update_sql_bbg_src()update_sql_master_data_i_bbg_vw()
 ```
 
-call the Oracle function directly through the cursor.
+currently return SQL strings using `.replace()`. They do not execute those SQL statements. That is fine if their purpose is simply to generate SQL for downstream tasks, but we should verify that the generated SQL is actually consumed later in the DAG.
 
-Replace your current task with:
+This is important because `load_i_gstm_detail` reads directly from `COL.MASTER_DATA_I_GSTM_VW`.
 
-```
-@task(task_id="check_row_count")def check_row_count(table_names: list, date_ctx: Dict) -> None:    hook = _hook()    conn = hook.get_conn()    cursor = conn.cursor()    try:        for table_name in table_names:            result = cursor.callfunc(                "COL.TABLE_LOAD_CHECK",                str,                [                    table_name,                    date_ctx["datekey"],                ],            )            if result and str(result).strip().upper() == "N":                raise AirflowException(                    "TABLE_LOAD_CHECK failed for %s" % table_name                )    finally:        cursor.close()        conn.close()
-```
-
-The important difference is:
-
-```
-cursor.callfunc(...)
-```
-
-instead of:
-
-```
-hook.get_first("SELECT ... FROM dual")
-```
-
-Conceptually, you're changing this:
-
-```
-Airflow
-   ↓
-SELECT COL.TABLE_LOAD_CHECK(...) FROM dual
-   ↓
-Oracle SQL engine
-   ↓
-Function tries COMMIT
-   ↓
-❌ ORA-14552
-```
-
-to:
-
-```
-Airflow
-   ↓
-Oracle PL/SQL function call
-   ↓
-COL.TABLE_LOAD_CHECK(...)
-   ↓
-Function executes
-   ↓
-✅ COMMIT/transaction logic allowed
-```
-
-### Your updated section should therefore look like this
-
-```
-@task(task_id="create_table_name_array")def create_table_name_array() -> list:    return ROW_COUNT_TABLES@task(task_id="check_row_count")def check_row_count(table_names: list, date_ctx: Dict) -> None:    hook = _hook()    conn = hook.get_conn()    cursor = conn.cursor()    try:        for table_name in table_names:            result = cursor.callfunc(                "COL.TABLE_LOAD_CHECK",                str,                [                    table_name,                    date_ctx["datekey"],                ],            )            if result and str(result).strip().upper() == "N":                raise AirflowException(                    "TABLE_LOAD_CHECK failed for %s" % table_name                )    finally:        cursor.close()        conn.close()@task(task_id="delete_i_gstm_detail")def delete_i_gstm_detail(date_ctx: Dict) -> None:    _hook().run(        "delete from COL.I_GSTM_DETAIL "
-```
-
-One thing I would **not** do yet is change the Oracle `TABLE_LOAD_CHECK` function itself. Since this is an **SSIS → Airflow migration**, the safer approach is to preserve the existing database procedure/function behavior and make Airflow invoke it in the appropriate Oracle execution context.
-
-After making this change, rerun only `check_row_count`. If it then throws a different Oracle error, send me that log — that will tell us whether the return datatype/signature of `TABLE_LOAD_CHECK` needs a small adjustment.
+Next step: Share the output of the column-comparison query. I'll then give you the exact replacement for lines 183–193, including the required column mappings, without changing the original SSIS business logic.
