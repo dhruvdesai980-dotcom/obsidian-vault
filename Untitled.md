@@ -1,35 +1,117 @@
 ```
-version: 2
+with source_data as (
 
-sources:
+select *
 
-- name: cib_raw
+from {{ source('cib_raw', 'cib_tbl_meetingtracker') }}
 
-description: Existing CIB source tables in the Databricks raw schema
+),
 
-database: d4001-centralus-tdvip-tdsbi_mstrt_catalog
+  
 
-schema: raw
+renamed as (
 
-tables:
+select
 
-- name: cib_tbl_meetingtracker
+cast(MeetingID as bigint) as meeting_id,
 
-description: Raw meeting-tracker data
+cast(`Date` as date) as meeting_date,
 
-- name: cib_lookup_strategist
+cast(DataUploadDateTime as timestamp) as data_upload_datetime,
 
-description: Lookup table containing strategist details
+  
 
-columns:
+cast(StrategistID as bigint) as strategist_id,
 
-- name: StrategistID
+cast(AccountID as bigint) as account_id,
 
-description: Unique strategist identifier
+  
 
-data_tests:
+trim(MeetingType) as meeting_type,
 
-- not_null
+trim(PrimarySales) as primary_sales,
 
-- unique
+trim(OtherSales) as other_sales,
+
+trim(OtherStrat) as other_strategist,
+
+  
+
+trim(TopicDiscussed) as topic_discussed,
+
+trim(Desk) as desk,
+
+  
+
+trim(ClientCountryStateProv) as client_country_state_provience,
+
+trim(ClientArea) as client_area,
+
+trim(ClientRegion) as client_region
+
+from source_data
+
+)
+
+  
+
+select *
+
+from renamed
+```
+
+```
+with source_data as (
+
+  
+
+select *
+
+from {{ source('cib_raw', 'cib_lookup_strategist') }}
+
+  
+
+)
+
+  
+
+select
+
+cast(StrategistID as bigint) as strategist_id,
+
+nullif(trim(Strategists), '-') as strategist_name_comma_format,
+
+case
+
+when StrategistID = 1000 then 'Unknown Strategist'
+
+else nullif(trim(StrategistsNoComma), '-')
+
+end as strategist_name,
+
+nullif(trim(Position), '-') as position,
+
+nullif(trim(StrategistCountry), '-') as strategist_country,
+
+nullif(trim(StrategistTeam), '-') as strategist_team,
+
+nullif(trim(ProductCovered), '-') as product_covered,
+
+nullif(trim(Region), '-') as strategist_region,
+
+nullif(trim(City), '-') as city,
+
+case
+
+when lower(trim(ActiveInactive)) = 'active' then 'Active'
+
+when lower(trim(ActiveInactive)) = 'inactive' then 'Inactive'
+
+else 'Unknown'
+
+end as active_status
+
+  
+
+from source_data
 ```
