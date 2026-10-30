@@ -1,3 +1,4 @@
+```
 query GetModelMetadata($environmentId: BigInt!) {
   environment(id: $environmentId) {
     applied {
@@ -29,3 +30,4 @@ query GetModelMetadata($environmentId: BigInt!) {
     }
   }
 }
+```
