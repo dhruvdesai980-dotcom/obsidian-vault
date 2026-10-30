@@ -1,84 +1,45 @@
 ```sql
--- Run within your selected Databricks catalog
 CREATE SCHEMA IF NOT EXISTS cdo_mosaic_poc;
 
-USE SCHEMA cdo_mosaic_poc;
+-- Team A: Equity positions
+CREATE OR REPLACE TABLE cdo_mosaic_poc.eq_positional (
+    posID INT,
+    rptDate DATE,
+    pnl DECIMAL(18,2),
+    mtm DECIMAL(18,2),
+    cash DECIMAL(18,2),
+    instrumentID INT
+) USING DELTA;
 
-CREATE OR REPLACE TABLE team_a_positions (
-    position_id STRING,
-    report_date DATE,
-    instrument_code STRING,
-    profit_loss DECIMAL(18,2),
+INSERT INTO cdo_mosaic_poc.eq_positional VALUES
+(101, DATE '2026-10-30', 100.00, 110.00, 15.00, 10),
+(102, DATE '2026-10-30',  50.00,  55.00, 10.00, 20);
 
-    -- Team A specific attributes
-    trader_name STRING,
-    desk_code STRING
-)
-USING DELTA;
 
-INSERT INTO team_a_positions
-(
-    position_id,
-    report_date,
-    instrument_code,
-    profit_loss,
-    trader_name,
-    desk_code
-)
-VALUES
-(
-    'A101',
-    DATE '2026-10-30',
-    'IBM',
-    100.00,
-    'John',
-    'Equity'
-),
-(
-    'A102',
-    DATE '2026-10-30',
-    'MSFT',
-    50.00,
-    'Sarah',
-    'Technology'
-);
+-- Team B: Instrument master
+CREATE OR REPLACE TABLE cdo_mosaic_poc.instrument (
+    code INT,
+    cusip STRING,
+    isin STRING,
+    securityType STRING
+) USING DELTA;
 
-CREATE OR REPLACE TABLE team_c_positions (
-    position_ref STRING,
-    business_date DATE,
-    instrument_id STRING,
-    net_pnl DECIMAL(18,2),
+INSERT INTO cdo_mosaic_poc.instrument VALUES
+(10, '459200101', 'US4592001014', 'Equity'),
+(20, '594918104', 'US5949181045', 'Equity'),
+(30, '037833100', 'US0378331005', 'Bond');
 
-    -- Team C specific attributes
-    portfolio_name STRING,
-    risk_category STRING
-)
-USING DELTA;
 
-INSERT INTO team_c_positions
-(
-    position_ref,
-    business_date,
-    instrument_id,
-    net_pnl,
-    portfolio_name,
-    risk_category
-)
-VALUES
-(
-    'C201',
-    DATE '2026-10-30',
-    'IBM',
-    200.00,
-    'Portfolio Alpha',
-    'Low'
-),
-(
-    'C202',
-    DATE '2026-10-30',
-    'AAPL',
-    75.00,
-    'Portfolio Beta',
-    'Medium'
-);
+-- Team C: Fixed income positions
+CREATE OR REPLACE TABLE cdo_mosaic_poc.fi_positional (
+    posIdentity INT,
+    rptDate DATE,
+    profitloss DECIMAL(18,2),
+    settledCash DECIMAL(18,2),
+    insCode INT
+) USING DELTA;
+
+INSERT INTO cdo_mosaic_poc.fi_positional VALUES
+(201, DATE '2026-10-30', 200.00, 20.00, 10),
+(202, DATE '2026-10-30',  75.00,  5.00, 30);
 ```
